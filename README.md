@@ -72,3 +72,43 @@ stateDiagram-v2
 
 - **AI Prompting**: I will like to setup a custom and provider independent AI harness called Pi. 
 - **Constraint Strategy**: Using the Pi harness, I will be able to adjust the AI model's context with specific constraints such as files, command, tooling, and prompting. The customization of Pi through the use of extensions will also become very helpful in constraining and guiding the AI model's behavior to ensure it works within the boundaries I set for it. Additional tricks that I could use to furter constrain the AI model's behaviors will be generic AGENTS.md files for project level constraints, and targeted tasks that I can program in skill.md files.
+
+---
+
+## 3. Concurrency (Sprint 2)
+
+### 3.1. Server Concurrency Model Selection
+
+- **Concurrency Model**: Multi-Threading.
+    - A dedicated thread is created for each client connection to the server. This makes sure that each client can send and receive messages independently without blocking each other. The main game loop will run in its own thread, which will be responsible for processing game state updates and broadcasting them to all connected clients.
+    - The shared memory structures will use mutual-exclusion locks, and a command queue to ensure that the game state is updated in a thread-safe manner. The different connection threads will be responsible for adding commands to a command queue, which will be processed in a FIFO manner by the main game loop thread. This will ensure that all commands are processed in the order they were received, maintaining the integrity of the game state.
+
+### 3.2. Client State & Turn Synchronization Scheme
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Client1 as Player 1
+    participant Server as Game Server
+    actor Client2 as Player 2
+
+    Client1->>Server: PLAYER_MOVE (x: 30, y: 0)
+    Note over Server: Server validates: Is this a valid location?
+    Note over Server: Add move command to game's command queue
+    alt Valid
+        Note over Server: Process all movements and update game state
+        Note over Server: Broadcast updated player positions
+        Server-->>Client1: PLAYER_UPDATE (Players)
+        Server-->>Client2: PLAYER_UPDATE (Players)
+    else Game Over
+        Note over Server: Updated player position reslts in a win condition
+        Server->>Client1: GAME_END (Game)
+        Server->>Client2: GAME_END (Game)
+    else Invalid
+        Server-->>Client1: ERROR ("Invalid Move")
+    end
+```
+
+### 3.3. Score & Leaderboard Synchronization Design
+
+- Game state will be stored in a thread-safe data structure within the server's memory. The server will maintain a score table that keeps track of each player's score and position in the game. When a player makes a move, the server will validate the move and update the game state accordingly. The updated score table will then be broadcast to both connected clients to ensure that they have the latest information about their scores and positions.
