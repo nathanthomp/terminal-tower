@@ -1,93 +1,142 @@
-#include "shared/message.h"
-#include "shared/protocol.h"
+#include "include/game.h"
+#include "include/protocol.h"
 #include <arpa/inet.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
-#define SERVER_ADDRESS "0.0.0.0"
-#define SERVER_PORT 65432
+ssize_t server_process_message(Game *game, const Message *request, const Address *source,
+                               Message *responses) {
+    switch (request->type) {
+    case MESSAGE_PLAYER_CONNECT: {
+        if (game->num_players >= MAX_PLAYERS) {
+            responses[0] = message_init(MESSAGE_ERROR, "Game is full");
+            return 1;
+        }
+
+        for (int i = 0; i < MAX_PLAYERS; i++) {
+            const Player *player = &game->players[i];
+            if (player->is_connected && strcmp(player->id, request->content) == 0) {
+                responses[0] = message_init(MESSAGE_ERROR, "Player already connected");
+                return 1;
+            }
+        }
+
+        game_add_player(game, request->content, source);
+
+        /**
+         * Broadcast the player connected message to all players
+         * If the game is full, send a game start message to all players
+         */
+        char connected_message[MAX_PLAYER_ID_LENGTH + 20];
+        strcpy(connected_message, request->content);
+        strcat(connected_message, " connected");
+
+        responses[0] = message_init(MESSAGE_PLAYER_CONNECTED, connected_message);
+
+        printf("%s connected\n", request->content);
+
+        if (game->num_players == MAX_PLAYERS) {
+            responses[1] = message_init(MESSAGE_GAME_START, "Game is starting");
+            printf("Starting game\n");
+        } else {
+            responses[1] = message_init(MESSAGE_GAME_WAIT, "Waiting for more players");
+        }
+
+        return 2;
+    }
+    case MESSAGE_PLAYER_DISCONNECT: {
+        printf("%s disconnected\n", request->content);
+
+        game_remove_player(game, request->content);
+
+        char disconnected_message[MAX_PLAYER_ID_LENGTH + 20];
+        strcpy(disconnected_message, request->content);
+        strcat(disconnected_message, " disconnected");
+
+        responses[0] = message_init(MESSAGE_PLAYER_DISCONNECTED, disconnected_message);
+
+        return 1;
+    }
+    default:
+        printf("Unsupported message type: %d\n", request->type);
+        return 0;
+    }
+}
 
 int main() {
+    char *server_port = "65432";
+
+    Address server_address;
+    memset(&server_address, 0, sizeof(server_address));
+    server_address.sin_family = AF_INET;
+    server_address.sin_addr.s_addr = INADDR_ANY;
+    server_address.sin_port = htons(atoi(server_port));
+
     /**
-     * Create a UDP socket
+     * Initialize server
      */
     int socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (socket_fd < 0) {
         perror("Socket creation failed");
-        return -1;
+        return EXIT_FAILURE;
     }
 
-    /**
-     * Bind the socket to a specific address and port
-     */
-    struct sockaddr_in server_addr;
-    memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(SERVER_PORT);
-
-    if (inet_pton(AF_INET, SERVER_ADDRESS, &server_addr.sin_addr) <= 0) {
-        perror("Invalid address");
-        close(socket_fd);
-        return -1;
-    }
-
-    int bind_result = bind(socket_fd, (struct sockaddr *)&server_addr, sizeof(server_addr));
+    int bind_result = bind(socket_fd, (struct sockaddr *)&server_address, sizeof(server_address));
     if (bind_result < 0) {
         perror("Bind failed");
         close(socket_fd);
-        return -1;
+        return EXIT_FAILURE;
     }
 
-    printf("Server started at %s:%d\n", SERVER_ADDRESS, SERVER_PORT);
+    Game game = {0};
+
+    // Get server ip address
+    char server_ip[INET_ADDRSTRLEN];
+    if (inet_ntop(AF_INET, &server_address.sin_addr, server_ip, sizeof(server_ip)) == NULL) {
+        perror("Failed to get server IP address");
+        close(socket_fd);
+        return EXIT_FAILURE;
+    }
+    printf("Server is running on %s:%s\n", server_ip, server_port);
 
     /**
-     * Receive messages from the client
+     * Receive messages
      */
+    Message responses[10];
     while (1) {
-        char buffer[256];
-        struct sockaddr_in client_addr;
-        socklen_t addr_len = sizeof(client_addr);
+        Address source;
+        socklen_t addr_len = sizeof(source);
 
-        ssize_t recv_len = recvfrom(socket_fd, buffer, sizeof(buffer) - 1, 0,
-                                    (struct sockaddr *)&client_addr, &addr_len);
-        if (recv_len < 0) {
-            perror("Receive failed");
+        Message request;
+        ssize_t receive_len = protocol_receive(socket_fd, &request, &source);
+        if (receive_len < 0) {
+            perror("Failed to receive message");
             break;
         }
 
-        Message message;
-        if (deserialize(buffer, &message) != 0) {
-            perror("Failed to deserialize message");
-            continue;
+        /**
+         * Process the received message
+         */
+        printf("[DEBUG] Received message: (%d) %s\n", request.type, request.content);
+
+        size_t response_len = server_process_message(&game, &request, &source, responses);
+        for (int i = 0; i < response_len; i++) {
+            ssize_t bytes_sent = protocol_send(socket_fd, &responses[i], &source);
+            if (bytes_sent < 0) {
+                perror("Failed to send response");
+            } else {
+                printf("[DEBUG] Sent message: (%d) %s\n", responses[i].type, responses[i].content);
+            }
         }
 
-        printf("Message received: (%d) %s\n", message.type, message.content);
-
-        /**
-         * Respond to the client with a message
-         */
-        if (message.type == MESSAGE_HELLO) {
-            Message response;
-            response.type = MESSAGE_GOODBYE;
-            strcpy(response.content, "Goodbye, World!!");
-
-            if (serialize(&response, buffer) != 0) {
-                perror("Failed to serialize message.");
-                continue;
-            }
-
-            ssize_t bytes_sent = sendto(socket_fd, buffer, sizeof(buffer), 0,
-                                        (struct sockaddr *)&client_addr, addr_len);
-
-            if (bytes_sent < 0) {
-                perror("Message send failed.");
-                close(socket_fd);
-                return 1;
-            }
-
-            printf("Message sent: (%d) %s\n", response.type, response.content);
+        for (int i = 0; i < MAX_PLAYERS; i++) {
+            const Player *player = &game.players[i];
+            printf("[DEBUG] Player %d: (%s) ID=%s, Address=%s:%d\n", i,
+                   player->is_connected ? "Active" : "Inactive", player->id,
+                   inet_ntoa(player->address.sin_addr), ntohs(player->address.sin_port));
         }
     }
 
