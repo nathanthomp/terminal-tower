@@ -11,9 +11,9 @@
 
 ### 1.1. Game Overview
 
-- **Chosen Game**: Terminal Tower (2D Platformer)
-- **Player Capacity**: 2 Players (Simulated via 2 CML Client nodes)
-- **Game Summary**: Players race to reach the top of a tower by jupping between platforms and avoiding obstacles while trying to outscore their opponent. Players can score points by collecting items and reaching certain height milestones. The game is designed to be fast-paced and competitive, with a focus on skillful movement and strategic item collection.
+- **Chosen Game**: Terminal Tower, a 2D platformer in the terminal.
+- **Player Capacity**: 2 Players, simulated via 2 CML client nodes.
+- **Game Summary**: Players race to reach the top of a tower by jumping between platforms and avoiding obstacles while trying to outscore their opponent. Players can score points by collecting items and reaching certain height milestones. The game is designed to be fast-paced and competitive, with a focus on skillful movement and strategic item collection.
 
 ### 1.2. Core Game Rules & Win/Draw Conditions
 
@@ -27,27 +27,32 @@
 
 ### 2.1. Transport Layer & Packet Framing Mechanism
 
-- **Transport Protocol**: Combination of TCP and UDP.
-    - **TCP**: Used for player connections (CLIENT -> SERVER) and game state synchronization (SERVER -> CLIENT).
-    - **UDP**: Used for player movement (CLIENT -> SERVER) and player position updates (SERVER -> CLIENT) where packet loss is acceptable and low latency is prioritized.
+- **Transport Protocol**: This game uses a custom protocol built on top of UDP that can provide reliable or unreliable delivery of game messages. The main determination of whether a message will need to be delivered reliably or unreliably will be explicity stated in a flag in the message header. Reliable messages will be sent over UDP with a custom acknowledgment and retransmission mechanism, while unreliable messages will be sent over UDP without any acknowledgment or retransmission.
+    - **Reliable Delivery**: For messages that require reliable delivery, the protocol will implement a simple acknowledgment system to ensure that important messages are received by the client. If a message is not acknowledged within a certain time frame, it will be retransmitted until it is successfully received or a maximum number of retries is reached.
+    - **Unreliable Delivery**: For messages that do not require reliable delivery, the protocol will send them without any acknowledgment or retransmission. This allows for faster communication of non-critical game updates like player movements and position updates.
+    - **Reasoning**: This choice primarity stems from the curiosity of implementing a custom protocol on top of UDP. The goal is to learn how to implement a reliable protocol on top of an unreliable transport layer, like how we learned throught the rdp protocol and the implementation of QUIC (HTTP/3), but also to gain experience with the challenges and trade-offs involved in doing so.
 - **Serialization Format**: Binary encoding with a bit order of big-endian.
 - **Framing Rule**: Length-Prefixed Framing with the following headers:
-    - **Length**: Determines the size and bounds of the message data.
     - **Type**: Type of the message, indicated by a predefined set of message types.
+    - **Length**: Determines the size and bounds of the message data.
 
 
 ### 2.2. Application Message Types
 
 | Message Type | Transport Protocol | Direction | Description |
 |--------------|--------------------|-----------|-------------|
-| PLAYER_CONNECT      | TCP | Client -> Server | Player requests connection to game server |
-| PLAYER_DISCONNECT   | TCP | Client -> Server | Player disconnects from game server |
-| GAME_WAIT           | TCP | Server -> Client | Game is waiting for two players to connect |
-| GAME_START          | TCP | Server -> Client | Game has started |
-| GAME_END            | TCP | Server -> Client | Game has ended |
-| PLAYER_MOVE         | UDP | Client -> Server | Update player position |
-| PLAYER_UPDATE       | UDP | Server -> Client | Player position updates |
-| ERROR               | TCP | Server -> Client | Error message |
+| PLAYER_CONNECT      | Custom (UDP) | Client -> Server | Player requests connection to game server |
+| PLAYER_CONNECTED    | Custom (UDP) | Server -> Client | Acknowledgment of player connection |
+| PLAYER_DISCONNECT   | Custom (UDP) | Client -> Server | Player disconnects from game server |
+| PLAYER_DISCONNECTED | Custom (UDP) | Server -> Client | Acknowledgment of player disconnection |
+| GAME_WAIT           | Custom (UDP) | Server -> Client | Game is waiting for two players to connect |
+| GAME_START          | Custom (UDP) | Server -> Client | Game has started |
+| GAME_PAUSE          | Custom (UDP) | Server -> Client | Game is paused |
+| GAME_RESUME         | Custom (UDP) | Server -> Client | Game is resuming |
+| GAME_END            | Custom (UDP) | Server -> Client | Game has ended |
+| PLAYER_MOVE         | Custom (UDP) | Client -> Server | Update player position |
+| PLAYER_UPDATE       | Custom (UDP) | Server -> Client | Player position updates |
+| ERROR               | Custom (UDP) | Server -> Client | Error message |
 
 ### 2.3. Game Finite State Machine (FSM) Design
 
@@ -65,8 +70,8 @@ stateDiagram-v2
 
 ### 2.4. Connection Termination & Socket Lifecycle Management
 
-- **Graceful Termination**: In a graceful, application layer disconnect, the client sends a `PLAYER_DISCONNECT` message to the server, which acknowledges the disconnection and closes the socket so that infinite recv loops are prevented. This will occur for TCP connections when we recieve a TCP FIN flag, while UDP connections will simply stop sending messages.
-- **Abnormal Termination**: If a client disconnects unexpectedly, due to network failure, link failure, or a system crash, the server will be able to detect TCP RST and EPIPE flags, along with basic timeout errors, which will remove the player from the game and cleanup any associated resources if necessary.
+- **Graceful Termination**: In a graceful, where a client wishes to disconnect, the client sends a `PLAYER_DISCONNECT` message to the server. This can be done when the player has finished playing or wants to leave the game. The server will then respond with a `PLAYER_DISCONNECTED` message, confirming that the player has been removed from the game and any associated resources have been cleaned up.
+- **Abnormal Termination**: If a client disconnects unexpectedly, due to network failure, link failure, or a system crash, the server will be able to detect these events with polling and timeout mechanisms.
 
 ### 2.5. AI Prompting & Contraint Strategy
 
@@ -88,9 +93,19 @@ stateDiagram-v2
 ```mermaid
 sequenceDiagram
     autonumber
-    actor Client1 as Player 1
+    actor Client1 as Player1
     participant Server as Game Server
-    actor Client2 as Player 2
+    actor Client2 as Player2
+
+    Client1->>Server: PLAYER_CONNECT (id: "Player1")
+    Note over Server: Broadcast PLAYER_CONNECTED (id: "Player1")
+    Note over Server: Broadcast GAME_WAIT
+
+    Client2->>Server: PLAYER_CONNECT (id: "Player2")
+
+    Note over Server: Broadcast PLAYER_CONNECTED (id: "Player2")
+
+    Note over Server: Broadcast GAME_START
 
     Client1->>Server: PLAYER_MOVE (x: 30, y: 0)
     Note over Server: Server validates: Is this a valid location?
