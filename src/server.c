@@ -5,59 +5,63 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <time.h>
 #include <unistd.h>
 
-ssize_t server_process_message(Game *game, const Message *request, const Address *source,
-                               Message *responses) {
-    switch (request->type) {
-    case MESSAGE_PLAYER_CONNECT: {
+/**
+ * The first implementation of broadcast versus unicast message dispatching is to use a same length
+ * array with type address. If the message at i is unicast, the target at [i] is the source. If the
+ * target at [i] is broadcast, the target at [i] is null or zero initialized.
+ *
+ * The second potential implementation, and most likely the better implementation, is to flatten out
+ * broadcast messages into a list of messages each wth a different address based on who that
+ * broadcast needs to go to.
+ */
+size_t server_process_message(Game *game, const Message *request, const Address *source,
+                              Message *responses, Address *targets) {
+    if (request->type == MESSAGE_PLAYER_CONNECT) {
         if (game->num_players >= MAX_PLAYERS) {
             responses[0] = message_init(MESSAGE_ERROR, "Game is full");
+            targets[0] = *source;
             return 1;
         }
-
         for (int i = 0; i < MAX_PLAYERS; i++) {
             const Player *player = &game->players[i];
-            if (player->is_connected && strcmp(player->id, request->content) == 0) {
+            if (player->active && strcmp(player->id, request->content) == 0) {
                 responses[0] = message_init(MESSAGE_ERROR, "Player already connected");
+                targets[0] = *source;
                 return 1;
             }
         }
-
         game_add_player(game, request->content, source);
-
-        /**
-         * Broadcast the player connected message to all players
-         * If the game is full, send a game start message to all players
-         */
-        char connected_message[MAX_PLAYER_ID_LENGTH + 20];
-        strcpy(connected_message, request->content);
-        strcat(connected_message, " connected");
-
-        responses[0] = message_init(MESSAGE_PLAYER_CONNECTED, connected_message);
-
+        responses[0] = message_init(MESSAGE_PLAYER_CONNECTED, request->content);
         printf("%s connected\n", request->content);
-
         if (game->num_players == MAX_PLAYERS) {
-            responses[1] = message_init(MESSAGE_GAME_START, "Game is starting");
-            printf("Starting game\n");
+            game->state = STATE_READY;
+            responses[1] = message_init(MESSAGE_GAME_READY, "Game is ready to start");
+            targets[1] = (Address){0};
+            printf("Game ready\n");
         } else {
+            game->state = STATE_WAITING;
             responses[1] = message_init(MESSAGE_GAME_WAIT, "Waiting for more players");
+            targets[1] = (Address){0};
         }
-
         return 2;
     }
+
+    Player *player = game_get_player(game, source);
+    if (player == NULL) {
+        // Investigate: This is a potential security risk.
+        return 0;
+    }
+    clock_gettime(CLOCK_MONOTONIC, &player->last_activity);
+
+    switch (request->type) {
     case MESSAGE_PLAYER_DISCONNECT: {
-        printf("%s disconnected\n", request->content);
-
         game_remove_player(game, request->content);
-
-        char disconnected_message[MAX_PLAYER_ID_LENGTH + 20];
-        strcpy(disconnected_message, request->content);
-        strcat(disconnected_message, " disconnected");
-
-        responses[0] = message_init(MESSAGE_PLAYER_DISCONNECTED, disconnected_message);
-
+        printf("%s disconnected\n", request->content);
+        responses[0] = message_init(MESSAGE_PLAYER_DISCONNECTED, request->content);
+        targets[0] = (Address){0};
         return 1;
     }
     default:
@@ -66,11 +70,38 @@ ssize_t server_process_message(Game *game, const Message *request, const Address
     }
 }
 
-int main() {
+void server_dispatch_messages(int socket_fd, Game *game, Message *responses, Address *targets,
+                              size_t response_len) {
+    for (int i = 0; i < response_len; i++) {
+        Address target = targets[i];
+        if (target.sin_family == 0) {
+            // broacast to all players
+            for (int j = 0; j < MAX_PLAYERS; j++) {
+                const Player *player = &game->players[j];
+                if (player->active) {
+                    protocol_send(socket_fd, &responses[i], &player->address);
+                }
+            }
+        } else {
+            // unicast to the specific player in targets[i]
+            protocol_send(socket_fd, &responses[i], &target);
+        }
+    }
+}
+
+int main(int argc, char *argv[]) {
+    /**
+     * Parse arguments for the help flag. If provided, print the help message and exit.
+     * If not provided, continue with the program.
+     */
+
+    /**
+     * Parse aguments for server port. If not provided, exit with an error message.
+     * If provided, validate the port. If invalid, exit with an error message.
+     */
     char *server_port = "65432";
 
-    Address server_address;
-    memset(&server_address, 0, sizeof(server_address));
+    Address server_address = {0};
     server_address.sin_family = AF_INET;
     server_address.sin_addr.s_addr = INADDR_ANY;
     server_address.sin_port = htons(atoi(server_port));
@@ -100,42 +131,41 @@ int main() {
         close(socket_fd);
         return EXIT_FAILURE;
     }
+
     printf("Server is running on %s:%s\n", server_ip, server_port);
 
     /**
      * Receive messages
      */
     Message responses[10];
+    Address targets[10];
     while (1) {
-        Address source;
-        socklen_t addr_len = sizeof(source);
-
-        Message request;
-        ssize_t receive_len = protocol_receive(socket_fd, &request, &source);
-        if (receive_len < 0) {
-            perror("Failed to receive message");
-            break;
-        }
+        Address client = {0};
+        Message request = {0};
 
         /**
-         * Process the received message
+         * Receive a message from a client. This will block until a message is received.
          */
-        printf("[DEBUG] Received message: (%d) %s\n", request.type, request.content);
+        protocol_receive(socket_fd, &request, &client);
 
-        size_t response_len = server_process_message(&game, &request, &source, responses);
-        for (int i = 0; i < response_len; i++) {
-            ssize_t bytes_sent = protocol_send(socket_fd, &responses[i], &source);
-            if (bytes_sent < 0) {
-                perror("Failed to send response");
-            } else {
-                printf("[DEBUG] Sent message: (%d) %s\n", responses[i].type, responses[i].content);
-            }
-        }
+        /**
+         * Process the message and generate responses.
+         */
+        size_t response_len = server_process_message(&game, &request, &client, responses, targets);
 
+        /**
+         * Send the responses to the appropriate clients.
+         */
+        server_dispatch_messages(socket_fd, &game, responses, targets, response_len);
+
+        /**
+         * Print the current state of the game
+         */
+        printf("[DEBUG] Current game state:\n");
         for (int i = 0; i < MAX_PLAYERS; i++) {
             const Player *player = &game.players[i];
             printf("[DEBUG] Player %d: (%s) ID=%s, Address=%s:%d\n", i,
-                   player->is_connected ? "Active" : "Inactive", player->id,
+                   player->active ? "Active" : "Inactive", player->id,
                    inet_ntoa(player->address.sin_addr), ntohs(player->address.sin_port));
         }
     }

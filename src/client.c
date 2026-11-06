@@ -13,14 +13,18 @@
 int client_process_message(const Message *message) {
     switch (message->type) {
     case MESSAGE_PLAYER_CONNECTED: {
-        printf("%s\n", message->content);
+        printf("%s connected\n", message->content);
         break;
     }
     case MESSAGE_PLAYER_DISCONNECTED: {
-        printf("Player disconnected: %s\n", message->content);
+        printf("%s disconnected\n", message->content);
         break;
     }
     case MESSAGE_GAME_WAIT: {
+        printf("%s\n", message->content);
+        break;
+    }
+    case MESSAGE_GAME_READY: {
         printf("%s\n", message->content);
         break;
     }
@@ -40,55 +44,40 @@ int client_process_message(const Message *message) {
 }
 
 int client_connect(int socket_fd, const char *player_id, Address *server) {
-    Message connect_message = message_init(MESSAGE_PLAYER_CONNECT, player_id);
-    ssize_t bytes_sent = protocol_send(socket_fd, &connect_message, server);
+    Message request = message_init(MESSAGE_PLAYER_CONNECT, player_id);
+    protocol_send(socket_fd, &request, server);
 
-    if (bytes_sent < 0) {
-        perror("Error: Failed to send message.");
-        close(socket_fd);
-        return -1;
-    }
+    Message response;
+    protocol_receive(socket_fd, &response, NULL);
 
-    printf("[DEBUG] Sent message: (%d) %s\n", connect_message.type, connect_message.content);
-
-    Message response_message;
-    ssize_t bytes_received = protocol_receive(socket_fd, &response_message, NULL);
-
-    if (bytes_received < 0) {
-        perror("Error: Failed to receive message.");
-        close(socket_fd);
-        return -1;
-    }
-
-    printf("[DEBUG] Received message: (%d) %s\n", response_message.type, response_message.content);
-
-    if (response_message.type == MESSAGE_PLAYER_CONNECTED ||
-        response_message.type == MESSAGE_ERROR) {
-        return client_process_message(&response_message);
+    if (response.type == MESSAGE_PLAYER_CONNECTED || response.type == MESSAGE_ERROR) {
+        return client_process_message(&response);
     }
 
     return -1;
 }
 
 int client_disconnect(int socket_fd, const char *player_id, Address *server) {
-    Message disconnect_message = message_init(MESSAGE_PLAYER_DISCONNECT, "Disconnecting");
-    ssize_t bytes_sent = protocol_send(socket_fd, &disconnect_message, server);
-
-    if (bytes_sent < 0) {
-        perror("Error: Failed to send disconnect message.");
-        close(socket_fd);
-        return -1;
-    }
+    Message request = message_init(MESSAGE_PLAYER_DISCONNECT, "Disconnecting");
+    protocol_send(socket_fd, &request, server);
 
     return 0;
 }
 
-int main() {
+int main(int argc, char *argv[]) {
+    /**
+     * Parse arguments for the help flag. If provided, print the help message and exit.
+     * If not provided, continue with the program.
+     */
+
+    /**
+     * Parse aguments for server address and port. If not provided, exit with an error message.
+     * If provided, validate the address and port. If invalid, exit with an error message.
+     */
     char *server_addr = "0.0.0.0";
     char *server_port = "65432";
 
-    Address client;
-    memset(&client, 0, sizeof(client));
+    Address client = {0};
     client.sin_family = AF_INET;
     client.sin_port = htons(CLIENT_PORT);
 
@@ -97,8 +86,7 @@ int main() {
         return EXIT_FAILURE;
     }
 
-    Address server;
-    memset(&server, 0, sizeof(server));
+    Address server = {0};
     server.sin_family = AF_INET;
     server.sin_port = htons(atoi(server_port));
     if (inet_pton(AF_INET, server_addr, &server.sin_addr) <= 0) {
@@ -112,13 +100,6 @@ int main() {
     int socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (socket_fd == -1) {
         perror("Socket failed");
-        return EXIT_FAILURE;
-    }
-
-    int bind_result = bind(socket_fd, (struct sockaddr *)&client, sizeof(client));
-    if (bind_result < 0) {
-        perror("Bind failed");
-        close(socket_fd);
         return EXIT_FAILURE;
     }
 
@@ -150,22 +131,17 @@ int main() {
      */
 
     /**
-     * Receive a response from the server
+     * Here, we need to continously do the following:
+     * - Listen for messages from the server
+     * - Listen for user input
      */
-    while (1) {
+    bool running = true;
+    while (running) {
         Message message;
-        ssize_t recv_len = protocol_receive(socket_fd, &message, NULL);
-
-        if (recv_len < 0) {
-            perror("Failed to receive message");
-            close(socket_fd);
-            break;
-        }
-
-        printf("[DEBUG] Received message: (%d) %s\n", message.type, message.content);
+        protocol_receive(socket_fd, &message, NULL);
 
         if (client_process_message(&message) != 0) {
-            break;
+            running = false;
         }
     }
 
