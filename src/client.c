@@ -1,6 +1,7 @@
 #include "include/game.h"
 #include "include/protocol.h"
 #include <arpa/inet.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,7 +11,7 @@
 #define CLIENT_ADDRESS "0.0.0.0"
 #define CLIENT_PORT 23456
 
-int client_process_message(const Message *message) {
+size_t client_process_message(const Message *message, Message *responses) {
     switch (message->type) {
     case MESSAGE_PLAYER_CONNECTED: {
         printf("%s connected\n", message->content);
@@ -32,6 +33,11 @@ int client_process_message(const Message *message) {
         printf("Game has started\n");
         break;
     }
+    case MESSAGE_PING: {
+        // responses[0] = message_init(MESSAGE_PONG, "Pong");
+        // return 1;
+        break;
+    }
     case MESSAGE_ERROR: {
         printf("Error: %s\n", message->content);
         return -1;
@@ -51,7 +57,7 @@ int client_connect(int socket_fd, const char *player_id, Address *server) {
     protocol_receive(socket_fd, &response, NULL);
 
     if (response.type == MESSAGE_PLAYER_CONNECTED || response.type == MESSAGE_ERROR) {
-        return client_process_message(&response);
+        return client_process_message(&response, NULL);
     }
 
     return -1;
@@ -62,6 +68,53 @@ int client_disconnect(int socket_fd, const char *player_id, Address *server) {
     protocol_send(socket_fd, &request, server);
 
     return 0;
+}
+
+/**
+ * Lets try to create a thread that listens for messages from the server and prints them to
+ * the console. This thread will run in the background and will not block the main thread.
+ * The main thread will listen for user input and will send messages to the server. The main
+ * thread will also handle the heartbeat mechanism.
+ */
+
+// Message request = {0};
+// protocol_receive(socket_fd, &request, NULL);
+
+// size_t response_len = client_process_message(&request, responses);
+// if (response_len < 0) {
+//     running = false;
+// }
+
+// for (int i = 0; i < response_len; i++) {
+//     protocol_send(socket_fd, &responses[i], &server);
+// }
+void *network_listener(void *arg) {
+    int socket_fd = *(int *)arg;
+
+    printf("[INFO] Network listener thread started\n");
+
+    while (1) {
+        Message request = {0};
+        protocol_receive(socket_fd, &request, NULL);
+
+        Message responses[10];
+        size_t response_len = client_process_message(&request, responses);
+        if (response_len < 0) {
+            break;
+        }
+
+        for (int i = 0; i < response_len; i++) {
+            // Send the response back to the server
+            Message response = responses[i];
+            printf("[WARNING] Not sending response to server: (%d) %s\n",
+                   (MessageType)response.type, response.content);
+            // protocol_send(socket_fd, &response, &server);
+        }
+    }
+
+    printf("[INFO] Network listener thread ended\n");
+
+    return NULL;
 }
 
 int main(int argc, char *argv[]) {
@@ -106,21 +159,21 @@ int main(int argc, char *argv[]) {
     /**
      * Connect to the server as a player
      */
-    char player_id[MAX_PLAYER_ID_LENGTH];
-    printf("Enter player id: ");
-    if (fgets(player_id, sizeof(player_id), stdin) == NULL) {
-        perror("Failed to read player id");
-        close(socket_fd);
-        return EXIT_FAILURE;
-    }
+    // char player_id[MAX_PLAYER_ID_LENGTH];
+    // printf("Enter player id: ");
+    // if (fgets(player_id, sizeof(player_id), stdin) == NULL) {
+    //     perror("Failed to read player id");
+    //     close(socket_fd);
+    //     return EXIT_FAILURE;
+    // }
 
-    player_id[strcspn(player_id, "\n")] = 0;
+    // player_id[strcspn(player_id, "\n")] = 0;
 
-    if (client_connect(socket_fd, player_id, &server) != 0) {
-        printf("Error: Could not connect to server\n");
-        close(socket_fd);
-        return EXIT_FAILURE;
-    }
+    // if (client_connect(socket_fd, player_id, &server) != 0) {
+    //     printf("Error: Could not connect to server\n");
+    //     close(socket_fd);
+    //     return EXIT_FAILURE;
+    // }
 
     /**
      * Wait for a response from the server.
@@ -135,17 +188,38 @@ int main(int argc, char *argv[]) {
      * - Listen for messages from the server
      * - Listen for user input
      */
+
+    /**
+     * Create a thread that listens for messages from the server and prints them to the console.
+     */
+    pthread_t network_thread;
+    int result = pthread_create(&network_thread, NULL, network_listener, &socket_fd);
+    if (result != 0) {
+        perror("Failed to create network listener thread");
+        close(socket_fd);
+        return EXIT_FAILURE;
+    }
+    printf("[INFO] Network listener thread created\n");
+
     bool running = true;
     while (running) {
-        Message message;
-        protocol_receive(socket_fd, &message, NULL);
-
-        if (client_process_message(&message) != 0) {
-            running = false;
-        }
+        /**
+         * 1. Process all messages (network)
+         *
+         * EXAMPLE: If the server sends
+         */
+        /**
+         * 2. Process all events (input)
+         */
+        /**
+         * 3. Update game
+         */
+        /**
+         * 4. Render game
+         */
     }
 
-    client_disconnect(socket_fd, player_id, &server);
+    // client_disconnect(socket_fd, player_id, &server);
     close(socket_fd);
     return 0;
 }

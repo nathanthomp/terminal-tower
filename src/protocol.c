@@ -37,7 +37,7 @@ void protocol_send(const int socket_fd, const Message *message, const Address *d
                                 (struct sockaddr *)destination, sizeof(*destination));
 
     if (bytes_sent < 0) {
-        printf("[ERROR] Failed to send response");
+        printf("[ERROR] Failed to send message");
     }
 
     printf("[DEBUG] Sent message to %s:%d: (%d) %s\n", inet_ntoa(destination->sin_addr),

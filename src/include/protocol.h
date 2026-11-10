@@ -26,11 +26,15 @@ typedef enum {
     MESSAGE_GAME_STARTED = 8,
     MESSAGE_GAME_PAUSE = 9,
     MESSAGE_GAME_PAUSED = 10,
-    MESSAGE_ERROR = 11,
+
+    MESSAGE_PING = 11,
+    MESSAGE_PONG = 12,
+    MESSAGE_ERROR = 13,
 } MessageType;
 
 typedef struct {
     MessageType type;
+    int session_id;
     char content[128];
 } Message;
 
