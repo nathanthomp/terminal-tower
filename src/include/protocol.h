@@ -17,32 +17,41 @@ typedef uint8_t Flag;
  */
 typedef enum {
     MESSAGE_PLAYER_CONNECT = 1,
-    MESSAGE_PLAYER_CONNECTED = 2,
-    MESSAGE_PLAYER_DISCONNECT = 3,
-    MESSAGE_PLAYER_DISCONNECTED = 4,
-    MESSAGE_GAME_WAIT = 5,
-    MESSAGE_GAME_READY = 6,
-    MESSAGE_GAME_START = 7,
-    MESSAGE_GAME_STARTED = 8,
+    MESSAGE_PLAYER_CONNECT_ACK = 2,
+    MESSAGE_PLAYER_CONNECTED = 3,
+
+    MESSAGE_PLAYER_DISCONNECT = 4,
+    MESSAGE_PLAYER_DISCONNECTED = 5,
+
+    MESSAGE_GAME_START = 8,
     MESSAGE_GAME_PAUSE = 9,
-    MESSAGE_GAME_PAUSED = 10,
+
+    MESSAGE_GAME_STATE = 10,
 
     MESSAGE_PING = 11,
     MESSAGE_PONG = 12,
     MESSAGE_ERROR = 13,
-} MessageType;
+
+    MESSAGE_ANY = 127,
+} Type;
 
 typedef struct {
-    MessageType type;
+    Type type;
     int session_id;
     char content[128];
 } Message;
 
-Message message_init(const MessageType type, const char *content);
+typedef enum {
+    RESULT_SUCCESS = 0,
+    RESULT_ERROR = -1,
+    RESULT_TIMEOUT = -2,
+} Result;
 
-void protocol_send(const int socket_fd, const Message *message, const Address *destination);
-void protocol_receive(const int socket_fd, Message *message, Address *source);
-void protocol_wait(const int socket_fd, const Message *request, Message *response,
-                   const MessageType type, const int timeout_seconds);
+Message message_init(const Type type, const char *content);
+
+Result protocol_send(const int socket_fd, const Message *message, const Address *destination);
+Result protocol_receive(const int socket_fd, Message *message, Address *source);
+Result protocol_wait(const int socket_fd, Message *message, Address *source, const Type type,
+                     const int timeout);
 
 #endif

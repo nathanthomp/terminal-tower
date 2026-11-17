@@ -37,6 +37,7 @@ typedef struct timespec Time;
 typedef struct {
     // Session information
     int id;
+    bool active;
     Time last_activity;
 
     // Player information
@@ -44,8 +45,8 @@ typedef struct {
     Player player;
 
     // Thread information
-    pthread_t thread;
-    bool active;
+    pthread_t handler;
+    pthread_mutex_t mutex;
 
     // Server information
     int socket;
@@ -58,7 +59,8 @@ typedef struct {
      */
 } Session;
 
-int session_connect(Session *session, const Player *player, const Address *address);
+int session_connect(Session *session, const Player *player, const Address *address,
+                    const int socket);
 void session_process(Session *session, const Game *game, const Message *message);
 void session_disconnect(Session *session);
 

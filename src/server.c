@@ -35,7 +35,7 @@ void server_print(Game *game, Session *sessions) {
     printf("[DEBUG] Game state: %d\n", game->state);
     for (int i = 0; i < MAX_PLAYERS; i++) {
         const Session session = sessions[i];
-        printf("[DEBUG] Session %d: (%s) Player=%s, Address=%s:%d\n", i,
+        printf("[DEBUG] Session[%d] %d: (%s) Player=%s, Address=%s:%d\n", i, session.id,
                session.active ? "Active" : "Inactive", session.player.id,
                inet_ntoa(session.address.sin_addr), ntohs(session.address.sin_port));
     }
@@ -75,16 +75,17 @@ void server_broadcast(int socket, const Session *sessions, const Message *messag
 }
 
 int main(int argc, char *argv[]) {
-    /**
-     * Parse arguments for the help flag. If provided, print the help message and exit.
-     * If not provided, continue with the program.
-     */
+    if (argc > 1 && strcmp(argv[1], "-h") == 0) {
+        printf("Usage: %s -p <server_port>\n", argv[0]);
+        return EXIT_SUCCESS;
+    }
 
-    /**
-     * Parse aguments for server port. If not provided, exit with an error message.
-     * If provided, validate the port. If invalid, exit with an error message.
-     */
-    char *server_port = "65432";
+    if (argc < 3) {
+        printf("Usage: %s -p <server_port>\n", argv[0]);
+        return EXIT_FAILURE;
+    }
+
+    char *server_port = argv[2];
 
     Address server_address = {0};
     server_address.sin_family = AF_INET;
@@ -119,54 +120,9 @@ int main(int argc, char *argv[]) {
 
     printf("[INFO] Server is running on %s:%s\n", server_ip, server_port);
 
-    /**
-     * Multithreaded server architecture:
-     *
-     * Main thread
-     * - Listens for incoming UDP messages.
-     * - Identifies which player sent each message.
-     * - Places incoming messages into that player's queue.
-     * - Creates new session threads when players connect.
-
-     * View of the server's main thread:
-     * ON MESSAGE:
-     * IF CONNECT:
-     * - Finds an available player slot if available.
-     * - Initializes the player's information.
-     * - Creates a message queue for that player.
-     * - Starts a new session thread.
-     * ELSE:
-     * - Determine player.
-     * - Place message into that player's queue.
-     * - Notify that player's session thread that a new message is available.
-     *
-     * View of a player's session thread:
-     * WHILE SESSION IS ACTIVE:
-     * - Wait for a message to be available in the queue.
-     * - Process the message.
-     * - Send responses.
-     * - Update the player's heartbeat timer.
-     * - If the heartbeat timer exceeds the timeout, terminate the session.
-     *
-     * The game variable is what will be shared between the main thread and the session threads. It
-     * will use a mutex to ensure that only one thread can modify it at a
-     * time.
-     *
-     * The main thread will handle the player disconnect message and remove the player
-     * from the game. The session thread will handle the cleanup of the player's session
-     * and terminate itself.
-     *
-     * Using thread safety, the player.active value will be set to false in the main
-     * thread, and the session thread will check that value and terminate itself.
-     */
-    /**
-     * Main server loop. Responsabilities include:
-     * - Message routing
-     * - Session management
-     */
     Session sessions[MAX_PLAYERS] = {0};
 
-    server_print(&game, sessions);
+    // server_print(&game, sessions);
 
     while (1) {
         Address client = {0};
@@ -176,7 +132,7 @@ int main(int argc, char *argv[]) {
         Session *session = server_get_session(sessions, &client);
 
         if (session == NULL) {
-            printf("[DEBUG] No session found for player: %s:%d\n", inet_ntoa(client.sin_addr),
+            printf("[DEBUG] No session found for: %s:%d\n", inet_ntoa(client.sin_addr),
                    ntohs(client.sin_port));
 
             if (request.type != MESSAGE_PLAYER_CONNECT) {
@@ -214,43 +170,54 @@ int main(int argc, char *argv[]) {
             strcpy(player.id, request.content);
 
             Session *new_session = &sessions[current_session_count];
-            if (session_connect(new_session, &player, &client) != 0) {
+            if (session_connect(new_session, &player, &client, socket_fd) != 0) {
                 printf("[ERROR] Failed to create session for player: %s:%d\n",
                        inet_ntoa(client.sin_addr), ntohs(client.sin_port));
                 continue;
             }
 
+            printf("[DEBUG] New session created for: %s (%s:%d) with ID: %d\n",
+                   new_session->player.id, inet_ntoa(new_session->address.sin_addr),
+                   ntohs(new_session->address.sin_port), new_session->id);
+
+            /**
+             * Move to session_handler thread.
+             */
+            char buffer[32];
+            snprintf(buffer, sizeof(buffer), "%d", new_session->id);
+            Message ack = message_init(MESSAGE_PLAYER_CONNECT_ACK, buffer);
+            server_unicast(socket_fd, &client, &ack);
+
             Message connect = message_init(MESSAGE_PLAYER_CONNECTED, new_session->player.id);
             server_broadcast(socket_fd, sessions, &connect);
-            printf("[INFO] %s connected\n", new_session->player.id);
+            // printf("[INFO] %s connected\n", new_session->player.id);
 
             if (current_session_count + 1 == MAX_PLAYERS) {
                 game.state = STATE_READY;
-                Message message = message_init(MESSAGE_GAME_READY, "Game is ready to start");
+                Message message = message_init(MESSAGE_GAME_STATE, "Game is ready to start");
                 server_broadcast(socket_fd, sessions, &message);
             } else {
-                Message message = message_init(MESSAGE_GAME_WAIT, "Waiting for more players");
+                Message message = message_init(MESSAGE_GAME_STATE, "Waiting for more players");
                 server_unicast(socket_fd, &client, &message);
             }
         } else {
-            // if (request.session_id != session->id) {
-            //     printf("[WARNING] Received invalid session ID from player: %s:%d\n",
-            //            inet_ntoa(client.sin_addr), ntohs(client.sin_port));
-            //     continue;
-            // }
-
-            if (request.type == MESSAGE_PLAYER_DISCONNECT) {
-                session_disconnect(session);
+            if (request.session_id != session->id) {
+                printf("[WARNING] Received invalid session ID from player: %s:%d\n",
+                       inet_ntoa(client.sin_addr), ntohs(client.sin_port));
                 continue;
             }
 
-            /**
-             * Add message to session's queue.
-             */
-            session_process(session, &game, &request);
+            if (request.type == MESSAGE_PLAYER_DISCONNECT) {
+                session_disconnect(session);
+            } else {
+                /**
+                 * Add message to session's queue.
+                 */
+                session_process(session, &game, &request);
+            }
         }
 
-        server_print(&game, sessions);
+        // server_print(&game, sessions);
     }
 
     close(socket_fd);

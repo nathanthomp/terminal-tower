@@ -39,27 +39,20 @@
 
 ### 2.2. Application Message Types
 
-| Message Type | Transport Protocol | Direction | Description |
-|--------------|--------------------|-----------|-------------|
-| PLAYER_CONNECT      | Custom (UDP) | Client -> Server | Player requests connection to game server |
-| PLAYER_CONNECTED    | Custom (UDP) | Server -> Client | Acknowledgment of player connection |
-| PLAYER_DISCONNECT   | Custom (UDP) | Client -> Server | Player disconnects from game server |
-| PLAYER_DISCONNECTED | Custom (UDP) | Server -> Client | Acknowledgment of player disconnection |
-| GAME_WAIT           | Custom (UDP) | Server -> Client | Game is waiting for two players to connect |
-| GAME_READY          | Custom (UDP) | Server -> Client | Game is ready to start |
-| GAME_START          | Custom (UDP) | Client -> Server | Player starts the game |
-| GAME_STARTED        | Custom (UDP) | Server -> Client | Acknowledgment that the game has started |
-
-| GAME_PAUSE          | Custom (UDP) | Client -> Server | Game is paused |
-| GAME_PAUSED         | Custom (UDP) | Server -> Client | Game is paused |
-| GAME_RESUME         | Custom (UDP) | Server -> Client | Game is resuming |
-| GAME_END            | Custom (UDP) | Server -> Client | Game has ended |
-| PLAYER_MOVE         | Custom (UDP) | Client -> Server | Update player position |
-| PLAYER_UPDATE       | Custom (UDP) | Server -> Client | Player position updates |
-
-| MESSAGE_PING        | Custom (UDP) | Server -> Client | Ping message for activity and latency check |
-| MESSAGE_PONG        | Custom (UDP) | Client -> Server | Pong message for activity and latency check |
-| ERROR               | Custom (UDP) | Server -> Client | Error message |
+| Message Type | Transport Protocol | Direction | Method | Description |
+|--------------|--------------------|-----------|--------|-------------|
+| PLAYER_CONNECT      | Custom (UDP) | Client -> Server | | Player requests connection to game server |
+| PLAYER_CONNECT_ACK  | Custom (UDP) | Server -> Client | UNICAST | Acknowledgment of player connection request, returns session ID |
+| PLAYER_CONNECTED    | Custom (UDP) | Server -> Client | BROADCAST | Acknowledgment of player connection to all sessions |
+| PLAYER_DISCONNECT   | Custom (UDP) | Client -> Server | | Player requests disconnects from game server |
+| PLAYER_DISCONNECTED | Custom (UDP) | Server -> Client | BROADCAST | Acknowledgment of player disconnection to all sessions |
+| GAME_UPDATE         | Custom (UDP) | Server -> Client | BROADCAST | Transfer of all game state |
+| GAME_START          | Custom (UDP) | Client -> Server | | Player starts the game |
+| GAME_PAUSE          | Custom (UDP) | Client -> Server | | Game is paused |
+| PLAYER_MOVE         | Custom (UDP) | Client -> Server | | Update player position |
+| PING                | Custom (UDP) | Server -> Client | UNICAST | Ping message for activity and latency check |
+| PONG                | Custom (UDP) | Client -> Server | | Pong message for activity and latency check |
+| ERROR               | Custom (UDP) | Server -> Client | UNICAST | Error message |
 
 ### 2.3. Game Finite State Machine (FSM) Design
 

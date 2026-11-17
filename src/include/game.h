@@ -35,4 +35,6 @@ void game_remove_player(Game *game, const char *player_id);
  * game_process_message
  */
 
+void game_update(Game *game);
+
 #endif

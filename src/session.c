@@ -1,29 +1,42 @@
 #include "include/session.h"
 #include <stdio.h> // Debugging
 #include <string.h>
+#include <sys/random.h>
 
-static void *session_worker(void *arg) {
+bool session_active(Session *session) {
+    pthread_mutex_lock(&session->mutex);
+    bool active = session->active;
+    pthread_mutex_unlock(&session->mutex);
+    return active;
+}
+
+static void *session_handler(void *arg) {
     Session *session = arg;
 
-    printf("[INFO] Session thread started for player: %s:%d\n",
-           inet_ntoa(session->address.sin_addr), ntohs(session->address.sin_port));
+    printf("[INFO] Session started for: %s (%s:%d) with ID: %d\n", session->player.id,
+           inet_ntoa(session->address.sin_addr), ntohs(session->address.sin_port), session->id);
 
-    while (session->active) {
-        Time now, elapsed = {0};
+    while (session_active(session)) {
+        /**
+         * Process all messages (network)
+         */
+
+        /**
+         * Ping every 15 seconds
+         */
+        Time now;
         clock_gettime(CLOCK_MONOTONIC, &now);
-        elapsed.tv_sec = now.tv_sec - session->last_activity.tv_sec;
-
-        if (elapsed.tv_sec >= HEARTBEAT_TIMEOUT) {
-            // session->active = false;
-            // printf("[WARNING] Session timed out for player: %s:%d\n",
-            //        inet_ntoa(session->address.sin_addr), ntohs(session->address.sin_port));
-        } else if (elapsed.tv_sec >= HEARTBEAT_INTERVAL) {
-            // Message ping = message_init(MESSAGE_PING, "Ping");
-            // protocol_send(session->socket, &ping, &session->address);
-        } else {
-            /**
-             * Still good
-             */
+        pthread_mutex_lock(&session->mutex);
+        Time last_activity = session->last_activity;
+        pthread_mutex_unlock(&session->mutex);
+        double elapsed =
+            (now.tv_sec - last_activity.tv_sec) + (now.tv_nsec - last_activity.tv_nsec) / 1e9;
+        if (elapsed > HEARTBEAT_TIMEOUT) {
+            Message ping = message_init(MESSAGE_PING, "Ping");
+            protocol_send(session->socket, &ping, &session->address);
+            pthread_mutex_lock(&session->mutex);
+            clock_gettime(CLOCK_MONOTONIC, &session->last_activity);
+            pthread_mutex_unlock(&session->mutex);
         }
     }
 
@@ -31,36 +44,51 @@ static void *session_worker(void *arg) {
      * Disconnect message
      */
     // Message disconnect = message_init(MESSAGE_PLAYER_DISCONNECTED, session->player.id);
-    // server_broadcast(session->server, &disconnect);
+    // server_broadcast(session->socket, &disconnect);
     // printf("[INFO] %s disconnected\n", session->player.id);
 
-    printf("[INFO] Session thread ended for player: %s:%d\n", inet_ntoa(session->address.sin_addr),
-           ntohs(session->address.sin_port));
+    printf("[INFO] Session ended for: %s (%s:%d) with ID: %d\n", session->player.id,
+           inet_ntoa(session->address.sin_addr), ntohs(session->address.sin_port), session->id);
 
     return NULL;
 }
 
-int session_connect(Session *session, const Player *player, const Address *address) {
+int session_connect(Session *session, const Player *player, const Address *address,
+                    const int socket) {
     *session = (Session){0};
     session->address = *address;
     session->player = *player;
-    session->active = true;
-
+    session->socket = socket;
+    session->handler = 0;
+    pthread_mutex_init(&session->mutex, NULL);
     clock_gettime(CLOCK_MONOTONIC, &session->last_activity);
 
-    int result = pthread_create(&session->thread, NULL, session_worker, session);
-    if (result != 0) {
+    if (getrandom(&session->id, sizeof(session->id), 0) != sizeof(session->id)) {
+        fprintf(stderr, "[ERROR] Failed to generate session id for:   %s (%s:%d)\n",
+                session->player.id, inet_ntoa(session->address.sin_addr),
+                ntohs(session->address.sin_port));
+        return -1;
+    }
+
+    session->active = true;
+    if (pthread_create(&session->handler, NULL, session_handler, session) != 0) {
+        fprintf(stderr, "[ERROR] Failed to create session thread for  %s (%s:%d)\n",
+                session->player.id, inet_ntoa(session->address.sin_addr),
+                ntohs(session->address.sin_port));
+
+        pthread_mutex_lock(&session->mutex);
         session->active = false;
-        fprintf(stderr, "[ERROR] Failed to create session thread for player %s: %s\n",
-                session->player.id, strerror(result));
-        return result;
+        pthread_mutex_unlock(&session->mutex);
+        return -1;
     }
 
     return 0;
 }
 
 void session_process(Session *session, const Game *game, const Message *message) {
+    pthread_mutex_lock(&session->mutex);
     clock_gettime(CLOCK_MONOTONIC, &session->last_activity);
+    pthread_mutex_unlock(&session->mutex);
 
     switch (message->type) {
     case MESSAGE_PING: {
@@ -78,6 +106,6 @@ void session_process(Session *session, const Game *game, const Message *message)
 void session_disconnect(Session *session) {
     if (session->active) {
         session->active = false;
-        pthread_join(session->thread, NULL);
+        pthread_join(session->handler, NULL);
     }
 }
