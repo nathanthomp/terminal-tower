@@ -1,16 +1,15 @@
-/**
- * Game determines what messages need to be sent and who should receive them.
- *
- * This should inlcude the message and delivery.
- */
 #ifndef GAME_H
 #define GAME_H
+
+#include <stdlib.h>
 
 #define MAX_PLAYERS 2
 #define MAX_PLAYER_ID_LENGTH 32
 
 typedef struct {
     char id[MAX_PLAYER_ID_LENGTH];
+    int x;
+    int y;
 } Player;
 
 typedef enum { STATE_WAITING, STATE_READY, STATE_PLAYING, STATE_PAUSED, STATE_OVER } State;
@@ -19,22 +18,18 @@ typedef struct {
 } Map;
 
 typedef struct {
-    // Player players[MAX_PLAYERS];
+    Player players[MAX_PLAYERS];
+    size_t player_count;
+
     State state;
     Map map;
-
-    // Session testing
-    int pings;
 } Game;
 
-void game_add_player(Game *game, const Player *player);
-void game_remove_player(Game *game, const char *player_id);
+int game_init(Game *game);
+int game_add_player(Game *game, const Player *player);
+void game_remove_player(Game *game, const Player *player);
 
-/**
- * game_process_input
- * game_process_message
- */
-
-void game_update(Game *game);
+void game_serialize(const Game *game, char *buffer);
+void game_deserialize(Game *game, const char *buffer);
 
 #endif

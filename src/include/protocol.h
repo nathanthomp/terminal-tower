@@ -11,10 +11,6 @@ typedef struct sockaddr_in Address;
 typedef int8_t Byte;
 typedef uint8_t Flag;
 
-/**
- * Seperate by client to server and server to client messages??
- *
- */
 typedef enum {
     MESSAGE_PLAYER_CONNECT = 1,
     MESSAGE_PLAYER_CONNECT_ACK = 2,
@@ -23,9 +19,12 @@ typedef enum {
     MESSAGE_PLAYER_DISCONNECT = 4,
     MESSAGE_PLAYER_DISCONNECTED = 5,
 
-    MESSAGE_GAME_START = 8,
-    MESSAGE_GAME_PAUSE = 9,
+    MESSAGE_PLAYER_MOVE = 6,
 
+    MESSAGE_GAME_START = 7,
+    MESSAGE_GAME_PAUSE = 8,
+
+    MESSAGE_GAME_MAP = 9,
     MESSAGE_GAME_STATE = 10,
 
     MESSAGE_PING = 11,
@@ -37,12 +36,14 @@ typedef enum {
 
 typedef struct {
     Type type;
-    int session_id;
+    uint16_t session_id;
     char content[128];
 } Message;
 
 typedef enum {
-    RESULT_SUCCESS = 0,
+    RESULT_SENT = 2,
+    RESULT_MESSAGE = 1,
+    RESULT_NOTHING = 0,
     RESULT_ERROR = -1,
     RESULT_TIMEOUT = -2,
 } Result;

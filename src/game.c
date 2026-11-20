@@ -1,41 +1,78 @@
 #include "include/game.h"
+#include <stdio.h>
 #include <string.h>
 
-// Player *game_get_player(const Game *game, const Address *player_address) {
-//     for (int i = 0; i < MAX_PLAYERS; i++) {
-//         const Player *player = &game->players[i];
-//         // Check if the player is active and if the address ip and port match the provided
-//         address if (player->active && player->address.sin_addr.s_addr ==
-//         player_address->sin_addr.s_addr &&
-//             player->address.sin_port == player_address->sin_port) {
-//             return (Player *)player;
-//         }
-//     }
-//     return NULL;
-// }
+int game_init(Game *game) {
+    game->player_count = 0;
+    game->state = STATE_WAITING;
 
-// Should "throw an error" if the game is full or if the player is already connected
-// void game_add_player(Game *game, const Player *player) {
-//     for (int i = 0; i < MAX_PLAYERS; i++) {
-//         Player *slot = &game->players[i];
-//         if (!slot->active) {
-//             *slot = *player;
-//             game->num_players++;
-//             return;
-//         }
-//     }
-// }
+    return 0;
+}
 
-// Should "throw an error" if the player is not found
-// void game_remove_player(Game *game, const char *player_id) {
-//     for (int i = 0; i < MAX_PLAYERS; i++) {
-//         Player *player = &game->players[i];
-//         if (player->active && strcmp(player->id, player_id) == 0) {
-//             *player = (Player){0};
-//             game->num_players--;
-//             return;
-//         }
-//     }
-// }
+int game_add_player(Game *game, const Player *player) {
+    if (game->player_count >= MAX_PLAYERS) {
+        return -1;
+    }
 
-void game_update(Game *game) {}
+    bool duplicate_player = false;
+    for (size_t i = 0; i < game->player_count; i++) {
+        const Player existing_player = game->players[i];
+        if (strcmp(existing_player.id, player->id) == 0) {
+            duplicate_player = true;
+            break;
+        }
+    }
+    if (duplicate_player) {
+        return -1;
+    }
+
+    game->players[game->player_count] = *player;
+    game->player_count++;
+
+    return 0;
+}
+
+void game_remove_player(Game *game, const Player *player) {
+    for (size_t i = 0; i < game->player_count; i++) {
+        if (strcmp(game->players[i].id, player->id) == 0) {
+            for (size_t j = i + 1; j < game->player_count; j++) {
+                game->players[j - 1] = game->players[j];
+            }
+            game->player_count--;
+            game->players[game->player_count] = (Player){0};
+            break;
+        }
+    }
+}
+
+void game_serialize(const Game *game, char *buffer) {
+    memset(buffer, 0, 128);
+    buffer[0] = (char)game->state;
+    buffer[1] = (char)game->player_count;
+
+    for (size_t i = 0; i < game->player_count; i++) {
+        const Player *player = &game->players[i];
+        strncpy(buffer + 2 + (i * 34), player->id, MAX_PLAYER_ID_LENGTH - 1);
+        buffer[2 + (i * 34) + MAX_PLAYER_ID_LENGTH - 1] = '\0';
+        buffer[2 + (i * 34) + MAX_PLAYER_ID_LENGTH] = (char)player->x;
+        buffer[2 + (i * 34) + MAX_PLAYER_ID_LENGTH + 1] = (char)player->y;
+    }
+}
+
+void game_deserialize(Game *game, const char *buffer) {
+    game->state = (State)buffer[0];
+    game->player_count = (size_t)buffer[1];
+
+    for (size_t i = 0; i < game->player_count; i++) {
+        Player *player = &game->players[i];
+        strncpy(player->id, buffer + 2 + (i * 34), MAX_PLAYER_ID_LENGTH - 1);
+        player->id[MAX_PLAYER_ID_LENGTH - 1] = '\0';
+        player->x = (int)buffer[2 + (i * 34) + MAX_PLAYER_ID_LENGTH];
+        player->y = (int)buffer[2 + (i * 34) + MAX_PLAYER_ID_LENGTH + 1];
+    }
+}
+
+void game_reset(Game *game) {
+    game->player_count = 0;
+    game->state = STATE_WAITING;
+}

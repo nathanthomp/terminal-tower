@@ -46,7 +46,7 @@
 | PLAYER_CONNECTED    | Custom (UDP) | Server -> Client | BROADCAST | Acknowledgment of player connection to all sessions |
 | PLAYER_DISCONNECT   | Custom (UDP) | Client -> Server | | Player requests disconnects from game server |
 | PLAYER_DISCONNECTED | Custom (UDP) | Server -> Client | BROADCAST | Acknowledgment of player disconnection to all sessions |
-| GAME_UPDATE         | Custom (UDP) | Server -> Client | BROADCAST | Transfer of all game state |
+| GAME_STATE          | Custom (UDP) | Server -> Client | BROADCAST | Transfer of all game state |
 | GAME_START          | Custom (UDP) | Client -> Server | | Player starts the game |
 | GAME_PAUSE          | Custom (UDP) | Client -> Server | | Game is paused |
 | PLAYER_MOVE         | Custom (UDP) | Client -> Server | | Update player position |
